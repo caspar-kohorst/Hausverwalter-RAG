@@ -7,7 +7,7 @@ from openai import OpenAI
 from dotenv import load_dotenv
 
 load_dotenv()
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+DEFAULT_OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 EMBEDDING_MODEL = "text-embedding-ada-002"
 LLM_MODEL = "gpt-4o"  # or "gpt-4"
 
@@ -21,13 +21,13 @@ def load_db():
         meta = pickle.load(f)
     return index, meta
 
-def get_embedding(text):
-    client = OpenAI(api_key=OPENAI_API_KEY)
+def get_embedding(text, api_key):
+    client = OpenAI(api_key=api_key)
     resp = client.embeddings.create(input=[text], model=EMBEDDING_MODEL)
     return np.array(resp.data[0].embedding, dtype="float32")
 
-def search(query, index, meta, k=10):
-    emb = get_embedding(query)
+def search(query, index, meta, api_key, k=10):
+    emb = get_embedding(query, api_key)
     D, I = index.search(np.array([emb]), k)
     results = []
     for idx in I[0]:
@@ -37,11 +37,11 @@ def search(query, index, meta, k=10):
         })
     return results
 
-def llm_answer(query, context):
-    client = OpenAI(api_key=OPENAI_API_KEY)
+def llm_answer(query, context, api_key):
+    client = OpenAI(api_key=api_key)
     context_str = "\n\n".join([f"Chunk {i+1} (Seitenbereich: {c['meta'].get('page_range', '-')}, Quelle: {c['meta'].get('source', '-')})\n{c['text']}" for i, c in enumerate(context)])
-    prompt = f"""Du bist ein Experte im Thema Hausverwaltung mit jahrelanger Erfahrung in Deutschland. Nutze die folgenden Auszüge als Kontext zusätzlich zu deinem eigenen parametrical Wissen, 
-                um die Frage zu beantworten. In einem ersten Schritt abstrahiere bitte ob es sich um Gemeinschaftseigentum oder um Sondereigentum handelt. Anschließend spezifiziere die Antwort auf die Frage.
+    prompt = f"""Du bist ein Experte im Thema Hausverwaltung mit jahrelanger Erfahrung in Deutschland. Nutze die folgenden Auszüge als Kontext zusätzlich zu deinem eigenen parametrical Wissen, \
+                um die Frage zu beantworten. In einem ersten Schritt abstrahiere bitte ob es sich um Gemeinschaftseigentum oder um Sondereigentum handelt. Anschließend spezifiziere die Antwort auf die Frage.\
                 Antworte auf Deutsch. Antworte präzise ohne dabei wichtige Details zu vergessen."\n\nKontext:\n{context_str}\n\nFrage: {query}\n\nAntwort:"""
     resp = client.chat.completions.create(
         model=LLM_MODEL,
@@ -55,14 +55,22 @@ def main():
     st.title("Hausverwaltung RAG Chatbot")
     st.write("Stelle eine Frage zum Thema Hausverwaltung.")
 
+    # Prompt user for OpenAI API key
+    api_key = st.text_input("Bitte gib deinen OpenAI API Key ein:", type="password")
+    if not api_key:
+        api_key = DEFAULT_OPENAI_API_KEY
+    if not api_key:
+        st.warning("Bitte gib einen gültigen OpenAI API Key ein, um den Chatbot zu nutzen.")
+        st.stop()
+
     index, meta = load_db()
     user_input = st.text_input("Deine Frage:", "")
 
     if st.button("Antworten") and user_input.strip():
         with st.spinner("Suche relevante Passagen..."):
-            context = search(user_input, index, meta)
+            context = search(user_input, index, meta, api_key)
         with st.spinner("Generiere Antwort..."):
-            answer = llm_answer(user_input, context)
+            answer = llm_answer(user_input, context, api_key)
         st.markdown("### Antwort")
         st.write(answer)
         st.markdown("---")
